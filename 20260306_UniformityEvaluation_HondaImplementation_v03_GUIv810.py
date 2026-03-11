@@ -55,8 +55,12 @@ class ContourCut:
             self.cal_Prm4()
 
             ## evaluate slits
-            self.slit_calc_x()
-            self.slit_calc_y()
+            self.xslit_flag = self.xslit_evaluate.get()
+            if self.xslit_flag:
+                self.slit_calc("x")
+            self.yslit_flag = self.yslit_evaluate.get()
+            if self.yslit_flag:
+                self.slit_calc("y")
 
             ## plot result
             self.plot_result_all()
@@ -70,7 +74,13 @@ class ContourCut:
             self.adjust_camera()
 
     def ask_inputs(self):
-        '''Ask inputs of 1) data path, 2) sheet number 3) lower threshold 4) upper threshold.'''
+        '''Ask inputs of 
+            1) input file
+            2) image clipping
+            3) room division
+            4) feature cut
+            5) evaluate slit for X/Y
+        '''
 
         a_data_input = PW.Input()
         self.xlsx_path = a_data_input.add_file('Data file path (xlsx)')
@@ -195,6 +205,9 @@ class ContourCut:
                 self.scene.delete_object(node)
 
     def prepare_image_data(self):
+        '''Prepare data by 1) calculating divisible stride size
+                           2) removing injection
+        '''
 
         ## get clipping area
         self.get_clipping_area()
@@ -247,16 +260,16 @@ class ContourCut:
             exit()
         
         ## check whether each stride is divisible by clipped width / height
+        def output_caution(stride_s):
+            print(f'** CAUTION ** The stride {stride_s} along X-direction is NOT divisible to the clipped width.')
+            print(f'** CAUTION ** Please check the division lists above and input an appropriate stride.')
+            print(f'** CAUTION ** Otherwise, the data outside of the clipped region will be used for Prm4 calculation.')
         for stride_x in self.stride_x_list:
             if self.width_clip % stride_x != 0:
-                print(f'** CAUTION ** The stride {stride_x} along X-direction is NOT divisible to the clipped width.')
-                print(f'** CAUTION ** Please check the division lists above and input an appropriate stride.')
-                print(f'** CAUTION ** Otherwise, the data outside of the clipped region will be used for Prm4 calculation.')
+                output_caution(stride_x)
         for stride_y in self.stride_y_list:
             if self.height_clip % stride_y != 0:
-                print(f'** CAUTION ** The stride {stride_y} along Y-direction is NOT divisible to the clipped height.')
-                print(f'** CAUTION ** Please check the division lists above and input an appropriate stride.')
-                print(f'** CAUTION ** Otherwise, the data outside of the clipped region will be used for Prm4 calculation.')
+                output_caution(stride_y)
 
     def all_stride_division_combination(self, width, height, print_flag):
         '''Print all possible stride / division combination.'''
@@ -291,6 +304,8 @@ class ContourCut:
                     stride_y_str = ''
                 ## print stride / division patterns
                 print(f'** REPORT **   division = {division:4d}, stride X = {stride_x_str:>4}, stride Y = {stride_y_str:>4}.')
+        else:
+            pass
 
     def all_divisors(self, length):
         '''Find all possible divisors for a given length.'''
@@ -372,10 +387,16 @@ class ContourCut:
         self.upper_contour_y = upper_contour_df["y"].to_numpy()
 
     def get_marginal_contour_position(self, contour_m, contour_n, sFlag, pFlag):
-        idx = np.lexsort((sFlag * contour_m, contour_n))
-        x_sorted = contour_n[idx]
+        '''Get marginal contour positions, which is applicable for either orientation.
+           Combination of sFlag and pFlag will change the calculation purpose,
+           such as getting the outer-most or inner-most position (X or Y) of the contour position.'''
+
+        idx = np.lexsort((sFlag * contour_m, contour_n))  ## primary sort key = contour_n, secondary sort key = contour_m
+        x_sorted = contour_n[idx]  ## reorganize contour_n by the sorted indices
+        ## keep only the first point for each unique contour_n after sorting
         first = np.r_[True, x_sorted[1:] != x_sorted[:-1]]
         keep_idx = idx[first]
+        
         if pFlag:
             return contour_m[keep_idx], contour_n[keep_idx]
         else:
@@ -866,103 +887,74 @@ class ContourCut:
         non_NaN_num_average = np.nanmean(data)
         return np.nansum((data - non_NaN_num_average)**2) / non_NaN_num_count
 
-    def slit_calc_x(self):
-        '''Calculate slits average along X-direction.'''
-
-        self.xslit_flag = self.xslit_evaluate.get()
-        if self.xslit_flag:
-            xslit_csvfile_path = Path(self.xslit_csvfile_path.get())
-            if xslit_csvfile_path != Path("."):
-                self.slit_xpos_df = pd.read_csv((xslit_csvfile_path), names=['Xpos'], header=None)
-                mask = self.slit_xpos_df["Xpos"] >= self.width
-                if mask.any():
-                    self.slit_xpos_df = self.slit_xpos_df[self.slit_xpos_df["Xpos"] < self.width]
-                    slit_xpos_filepath = os.path.join(self.output_folder_path, "slit_x_pos.csv")
-                    self.slit_xpos_df.to_csv(slit_xpos_filepath, index=None)
-                    print(f'** CAUTION ** X-positions larger than the domain size have been removed.')
-                    print(f'** CAUTION ** Filtered X-positions are to {slit_xpos_filepath}.')
-            else:
-                slit_xnum = self.xslit_num.get()
-                if slit_xnum == 0:
-                    print(f'** ERROR ** Please input an integer greater than 0 or import a CSV file in 1b) (X).')
-                    exit()
-                else:
-                    dx = self.width // slit_xnum
-                    xslit_list = [dx * i for i in range(slit_xnum)]
-                    self.slit_xpos_df = pd.DataFrame(np.array(xslit_list), columns=["Xpos"])
-            slit_xwidth = self.xslit_width.get()
-            slit_x_df = pd.DataFrame({"Position Y|X": np.arange(self.height)})
-            for value in self.slit_xpos_df["Xpos"]:
-                ## find left and right boundary for slit
-                if slit_xwidth % 2 == 1:
-                    xleft = value - slit_xwidth // 2
-                else:
-                    xleft = value - slit_xwidth // 2 + 1
-                xright = value + slit_xwidth // 2 + 1
-                xleft = max(0, xleft)
-                xright = min(self.width, xright)
-
-                ## calculate average value across slit width
-                slit_xave = np.mean(self.df_np[:,xleft:xright], axis=1)
-                ## add to slit_x_df
-                slit_x_df[value] = slit_xave
-            ## output data into CSV file
-            slit_x_filepath = os.path.join(self.output_folder_path, "slit_x_average_data.csv")
-            slit_x_df.to_csv(slit_x_filepath, index=False, na_rep='NaN')
-
-            print(f'** REPORT ** Slits average along X-direction is calculated.')
-            print(f'** REPORT ** Slits average along X-direction has been exported to {slit_x_filepath}.')
+    def slit_calc(self, axis):
+        """Calculate slit averages along X or Y direction.
+           * axis : 'x' or 'y'
+        """
+        # ----- axis-dependent settings -----
+        if axis == "x":
+            csvfile_path = Path(self.xslit_csvfile_path.get())
+            slit_num = self.xslit_num.get()
+            slit_width = self.xslit_width.get()
+            max_size = self.width
+            other_size = self.height
         else:
-            pass
+            csvfile_path = Path(self.yslit_csvfile_path.get())
+            slit_num = self.yslit_num.get()
+            slit_width = self.yslit_width.get()
+            max_size = self.height
+            other_size = self.width
 
-    def slit_calc_y(self):
-        '''Calculate slits average along Y-direction.'''
-
-        self.yslit_flag = self.yslit_evaluate.get()
-        if self.yslit_flag:        
-            yslit_csvfile_path = Path(self.yslit_csvfile_path.get())
-            if yslit_csvfile_path != Path("."):
-                self.slit_ypos_df = pd.read_csv((yslit_csvfile_path), names=['Ypos'], header=None)
-                mask = self.slit_ypos_df["Ypos"] >= self.height
-                if mask.any():
-                    self.slit_ypos_df = self.slit_ypos_df[self.slit_ypos_df["Ypos"] < self.height]
-                    slit_ypos_filepath = os.path.join(self.output_folder_path, "slit_y_pos.csv")
-                    self.slit_ypos_df.to_csv(slit_ypos_filepath, index=None)
-                    print(f'** CAUTION ** Y-positions larger than the domain size have been removed.')
-                    print(f'** CAUTION ** Filtered Y-positions are to {slit_ypos_filepath}.')
-            else:
-                slit_ynum = self.yslit_num.get()
-                if slit_ynum == 0:
-                    print(f'** ERROR ** Please input an integer greater than 0 or import a CSV file in 1b) (Y).')
-                    exit()
-                else:
-                    dy = self.height // slit_ynum
-                    yslit_list = [dy * j for j in range(slit_ynum)]
-                    self.slit_ypos_df = pd.DataFrame(np.array(yslit_list), columns=["Ypos"])
-            slit_ywidth = self.yslit_width.get()
-            slit_y_df = pd.DataFrame({"Position Y|X": np.arange(self.width)})
-            for value in self.slit_ypos_df["Ypos"]:
-                ## find left and right boundary for slit
-                if slit_ywidth % 2 == 1:
-                    yleft = value - slit_ywidth // 2
-                else:
-                    yleft = value - slit_ywidth // 2 + 1
-                yright = value + slit_ywidth // 2 + 1
-                yleft = max(0, yleft)
-                yright = min(self.height, yright)
-
-                ## calculate average value across slit width
-                slit_yave = np.mean(self.df_np[yleft:yright,:], axis=0)
-                ## add to slit_y_df
-                slit_y_df[value] = slit_yave
-            ## output data into CSV file
-            slit_y_filepath = os.path.join(self.output_folder_path, "slit_y_average_data.csv")
-            slit_y_df.T.to_csv(slit_y_filepath, header=False, na_rep='NaN')
-
-            print(f'** REPORT ** Slits average along Y-direction is calculated.')
-            print(f'** REPORT ** Slits average along Y-direction has been exported to {slit_y_filepath}.')
+        # ----- read or generate slit positions -----
+        pos_col = f"{axis.upper()}pos"
+        if csvfile_path != Path("."):
+            slit_pos_df = pd.read_csv(csvfile_path, names=[pos_col], header=None)
+            mask = slit_pos_df[pos_col] >= max_size
+            if mask.any():
+                filtered_csv = os.path.join(self.output_folder_path, f"slit_{axis}_pos.csv")
+                slit_pos_df = slit_pos_df[slit_pos_df[pos_col] < max_size]
+                slit_pos_df.to_csv(filtered_csv, index=None)
+                print(f"** CAUTION ** {axis.upper()}-positions larger than the domain size have been removed.")
+                print(f"** CAUTION ** Filtered positions are exported to {filtered_csv}.")
         else:
-            pass
+            if slit_num == 0:
+                print(f"** ERROR ** Please input an integer greater than 0 or import a CSV file in 1b) ({axis.upper()}).")
+                exit()
+            dpos = max_size // slit_num
+            slit_list = [dpos * i for i in range(slit_num)]
+            slit_pos_df = pd.DataFrame(np.array(slit_list), columns=[pos_col])
+
+        setattr(self, f"slit_{axis}pos_df", slit_pos_df)
+
+        # ----- calculate slit averages -----
+        slit_df = pd.DataFrame({"Position Y|X": np.arange(other_size)})
+
+        for value in slit_pos_df[pos_col]:
+            if slit_width % 2 == 1:
+                left = value - slit_width // 2
+            else:
+                left = value - slit_width // 2 + 1
+            right = value + slit_width // 2 + 1
+
+            left = max(0, left)
+            right = min(max_size, right)
+
+            if axis == "x":
+                slit_ave = np.mean(self.df_np[:, left:right], axis=1)
+            else:
+                slit_ave = np.mean(self.df_np[left:right, :], axis=0)
+
+            slit_df[value] = slit_ave
+
+        # ----- output -----
+        output_csv = os.path.join(self.output_folder_path, f"slit_{axis}_average_data.csv")
+        if axis == "x":
+            slit_df.to_csv(output_csv, index=False, na_rep="NaN")
+        else:
+            slit_df.T.to_csv(output_csv, header=False, na_rep="NaN")
+
+        print(f"** REPORT ** Slits average along {axis.upper()}-direction is calculated.")
+        print(f"** REPORT ** Slits average along {axis.upper()}-direction has been exported to {output_csv}.")
 
     def plot_result_all(self):
         '''Plot all results.'''
@@ -1235,13 +1227,10 @@ class ContourCut:
         ## save scene settings
         self.scene.write()
 
-def main():
+
+if 'Particleworks' in __name__:
     session = PW.Session()
     scene   = session.active_scene
     if scene != None:
         cc = ContourCut(session, scene)
         cc.run()
-
-if 'Particleworks' in __name__:
-    main()
-
