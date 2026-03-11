@@ -30,8 +30,6 @@ class ContourCut:
         '''Run main function.'''
 
         if self.ask_inputs():
-            ## clear existing nodes
-            self.clear_nodes()
             ## prepare image data
             self.prepare_image_data()
             
@@ -82,6 +80,10 @@ class ContourCut:
             5) evaluate slit for X/Y
         '''
 
+        ## clear existing nodes
+        self.clear_nodes()
+
+        ## ask inputs
         a_data_input = PW.Input()
         self.xlsx_path = a_data_input.add_file('Data file path (xlsx)')
         self.sheet_num = a_data_input.add_integer('Sheet number', 0)
