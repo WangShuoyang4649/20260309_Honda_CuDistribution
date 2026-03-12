@@ -1,3 +1,9 @@
+"""
+Uniformity Evaluation - Honda Cu Distribution
+Version: v03 GUI v810
+Date: 2026-03-12
+"""
+
 import os
 import time
 import datetime
@@ -8,7 +14,6 @@ matplotlib.use('module://pwpy.plot_backend')
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-
 
 import numpy as np
 import pandas as pd
